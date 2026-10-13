@@ -1,4 +1,6 @@
 import os
+import json
+import shlex
 from pathlib import Path
 
 ###########################
@@ -18,8 +20,76 @@ PROJECT_NR = config.get("project_nr", "nr_")
 THREADS = workflow.cores
 DIAMOND_DB_DIR = os.path.dirname(DIAMOND_DB)
 OUTPUT_DIR = "PacBio_output"
-INPUT_DIR = "PacBio_data"
+INPUT_DIR = config.get("input_dir", "PacBio_data")
+# Explicit FASTQ locations from the launcher. Legacy PacBio_data lookup is retained.
+READ_FILES = config.get("reads", {})
+if not isinstance(READ_FILES, dict):
+    raise ValueError("reads must be a mapping of sample ID to FASTQ path")
 SING_DIR = "bin/singularity"
+
+# One manifest describes both container backends. Docker execution uses a
+# lightweight wrapper; Apptainer/Singularity use Snakemake's native runtime.
+CONTAINER_RUNTIME = config.get("container_runtime", "apptainer")
+if CONTAINER_RUNTIME not in ("docker", "apptainer", "singularity", "none"):
+    raise ValueError("container_runtime must be docker, apptainer, singularity or none")
+IMAGE_CONFIG = config.get("container_images", "bin/containers/images.json")
+with open(IMAGE_CONFIG, encoding="utf-8") as image_file:
+    CONTAINER_IMAGES = json.load(image_file)
+
+# Bind external inputs by their real, absolute directories at the same paths.
+REPO_ROOT = os.path.realpath(os.getcwd())
+_EXTERNAL_INPUTS = [DIAMOND_DB, *READ_FILES.values(),
+                    config.get("metaeuk_ref", ""), config.get("tiara_tsv", "")]
+_EXTERNAL_DIRS = sorted({os.path.dirname(os.path.realpath(path))
+                         for path in _EXTERNAL_INPUTS if path and os.path.isabs(path)
+                         and os.path.commonpath([REPO_ROOT, os.path.realpath(path)]) != REPO_ROOT})
+
+
+def container_image(tool):
+    if CONTAINER_RUNTIME in ("apptainer", "singularity"):
+        return config.get(f"{tool}_sif", CONTAINER_IMAGES[tool]["apptainer"])
+    return None
+
+
+LONGQC_PATH = "/opt/LongQC/longQC.py" if CONTAINER_RUNTIME == "docker" else "/root/LongQC/longQC.py"
+
+
+def tool_command(tool, script):
+    if CONTAINER_RUNTIME != "docker":
+        return script
+    image = CONTAINER_IMAGES[tool]["docker"]
+    args = ["python3", "bin/scripts/docker_exec.py", "--image", image]
+    for folder in _EXTERNAL_DIRS:
+        args += ["--mount", folder]
+    # Quoted heredoc transfers the already-formatted Snakemake shell body
+    # verbatim, including user paths and shell quoting, into Docker.
+    cmd = " ".join(shlex.quote(a) for a in args)
+    return cmd + " <<'SCHWAMMERL_DOCKER_SCRIPT'\n" + script.strip("\n") + "\nSCHWAMMERL_DOCKER_SCRIPT\n"
+
+# Optional standalone gene prediction; original BUSCO/mycoBinR path stays intact.
+GENE_PREDICTION = config.get("gene_prediction", "busco")
+TIARA_MODE = config.get("tiara_mode", "off")
+TIARA_SOURCE = config.get("tiara_tsv", "")
+METAEUK_REF = config.get("metaeuk_ref", "")
+if GENE_PREDICTION not in ("busco", "standalone"):
+    raise ValueError("gene_prediction must be 'busco' or 'standalone'")
+if TIARA_MODE not in ("off", "run", "file"):
+    raise ValueError("tiara_mode must be off, run or file")
+if GENE_PREDICTION == "standalone" and not METAEUK_REF:
+    raise ValueError("standalone prediction needs metaeuk_ref")
+if GENE_PREDICTION == "standalone" and TIARA_MODE == "file" and not TIARA_SOURCE:
+    raise ValueError("tiara_mode=file needs tiara_tsv")
+
+# Input/output contract for the standalone DIAMOND branch.
+def gp_root(wc):
+    return f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}{wc.sample}"
+
+def gp_file(wc, suffix):
+    return f"{gp_root(wc)}/{suffix}"
+
+def tiara_path(wc):
+    return gp_file(wc, "tiara/complete.classification.tsv")
+
 
 ##################
 #   Definitions  #
@@ -46,7 +116,7 @@ if not SAMPLES:
 
 # Paths/helpers
 def fq_path(sample):
-    return f"{INPUT_DIR}/{PROJECT_NR}{sample}.hifireads.fastq.gz"
+    return READ_FILES.get(str(sample), f"{INPUT_DIR}/{PROJECT_NR}{sample}.hifireads.fastq.gz")
 
 def ok_marker(sample):
     return f"{OUTPUT_DIR}/.ok/{PROJECT_NR}{sample}.inputs.ok"  
@@ -63,7 +133,10 @@ rule all:
         # reports
         expand(f"{OUTPUT_DIR}/reports/{PROJECT_NR}" + "{sample}_report.html", sample=SAMPLES),
         # per-sample completion flags
-        expand(f"{OUTPUT_DIR}/.complete/{PROJECT_NR}" + "{sample}.complete", sample=SAMPLES)
+        expand(f"{OUTPUT_DIR}/.complete/{PROJECT_NR}" + "{sample}.complete", sample=SAMPLES),
+        # Standalone predictions feed their own DIAMOND taxonomic results.
+        (expand(f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/diamond_taxonomy.tsv",
+                sample=SAMPLES) if GENE_PREDICTION == "standalone" else []),
 
 ########################
 #   Input validation   #
@@ -89,7 +162,9 @@ rule check_input:
         f="{input.fastq}"
         [ -f "$f" ] || (echo "Missing: $f" >&2; exit 1)
         [ -s "$f" ] || (echo "Empty file: $f" >&2; exit 1)
-        gzip -t "$f" || (echo "gzip integrity failed: $f" >&2; exit 1)
+        if [[ "$f" == *.gz ]]; then
+            gzip -t "$f" || (echo "gzip integrity failed: $f" >&2; exit 1)
+        fi
         mkdir -p "$(dirname {output.ok})"
         echo "OK {wildcards.sample}" > {output.ok}
         """
@@ -105,16 +180,14 @@ rule longqc:
     output:
         longqc_dir=directory(f"{OUTPUT_DIR}/longqc_output/{PROJECT_NR}" + "{sample}_quality")
     threads: THREADS
-    singularity:
-        f"{SING_DIR}/longqc.sif"
-    shell:
-        r"""
-        python /root/LongQC/longQC.py sampleqc \
+    container: container_image("longqc")
+    shell: tool_command("longqc", r"""
+        python {LONGQC_PATH} sampleqc \
           -x pb-rs2 \
           -p {threads} \
           -o {output.longqc_dir} \
           {input.fastq}
-        """
+        """)
 
 ################
 #   Flye       #
@@ -125,18 +198,17 @@ rule flye_assembly:
         ok=ok_marker("{sample}"),
         fastq=lambda wc: fq_path(wc.sample)
     output:
-        assembly_dir=directory(f"{OUTPUT_DIR}/flye_output/{PROJECT_NR}" + "{sample}_flye"),
         assembly=f"{OUTPUT_DIR}/flye_output/{PROJECT_NR}" + "{sample}_flye/assembly.fasta"
+    params:
+        assembly_dir=f"{OUTPUT_DIR}/flye_output/{PROJECT_NR}" + "{sample}_flye"
     threads: THREADS
-    singularity:
-        f"{SING_DIR}/flye.sif"
-    shell:
-        r"""
+    container: container_image("flye")
+    shell: tool_command("flye", r"""
         flye --pacbio-hifi {input.fastq} \
              --meta \
-             --out-dir {output.assembly_dir} \
+             --out-dir {params.assembly_dir} \
              --threads {threads}
-        """
+        """)
 
 ################
 #   CoverM     #
@@ -150,10 +222,8 @@ rule coverm_coverage:
     output:
         coverage_dir=directory(f"{OUTPUT_DIR}/coverm_output/{PROJECT_NR}" + "{sample}_mean_cov")
     threads: THREADS
-    singularity:
-        f"{SING_DIR}/coverm.sif"
-    shell:
-        r"""
+    container: container_image("coverm")
+    shell: tool_command("coverm", r"""
         set -euo pipefail
         mkdir -p {output.coverage_dir} {output.coverage_dir}/bam_cache
 
@@ -165,7 +235,7 @@ rule coverm_coverage:
           --threads {threads} \
           --bam-file-cache-directory {output.coverage_dir}/bam_cache \
           -o {output.coverage_dir}/mean_coverage.tsv
-        """
+        """)
 
 ################
 #   BUSCO      #
@@ -178,10 +248,8 @@ rule busco_run:
     output:
         busco_output=directory(f"{OUTPUT_DIR}/busco_output/{PROJECT_NR}" + "{sample}_busco")
     threads: THREADS
-    singularity:
-        f"{SING_DIR}/busco.sif"
-    shell:
-        r"""
+    container: container_image("busco")
+    shell: tool_command("busco", r"""
         busco -i {input.assembly} \
               -m genome \
               -l ascomycota_odb12 \
@@ -191,7 +259,7 @@ rule busco_run:
               --out_path {OUTPUT_DIR}/busco_output/ \
               --metaeuk \
               --download_path bin/BUSCO_downloads
-        """
+        """)
 
 ################
 #  TelFinder   #
@@ -204,14 +272,12 @@ rule telfinder:
     output:
         telomeres_dir=directory(f"{OUTPUT_DIR}/telfinder_output/{PROJECT_NR}" + "{sample}_telomeres")
     threads: THREADS
-    singularity:
-        f"{SING_DIR}/telfinder.sif"
-    shell:
-        r"""
+    container: container_image("telfinder")
+    shell: tool_command("telfinder", r"""
         mkdir -p {output.telomeres_dir}
         python /opt/TelFinder/TelFinder.py -f fa -inf {input.assembly} -s NCR -o {output.telomeres_dir} -e left
         python /opt/TelFinder/TelFinder.py -f fa -inf {input.assembly} -s NCR -o {output.telomeres_dir} -e right
-        """
+        """)
 
 ################
 #   DIAMOND    #
@@ -223,27 +289,25 @@ rule diamond_blastp:
         dmnd=DIAMOND_DB,
         busco=lambda wc: f"{OUTPUT_DIR}/busco_output/{PROJECT_NR}{wc.sample}_busco"
     output:
-        outdir=directory(f"{OUTPUT_DIR}/diamond_output/{PROJECT_NR}{{sample}}_taxonomy_prots"),
         tax=f"{OUTPUT_DIR}/diamond_output/{PROJECT_NR}{{sample}}_taxonomy_prots/{PROJECT_NR}{{sample}}_taxprot"
     params:
+        outdir=f"{OUTPUT_DIR}/diamond_output/{PROJECT_NR}" + "{sample}_taxonomy_prots",
         busco_dir=lambda w: f"{OUTPUT_DIR}/busco_output/{PROJECT_NR}{w.sample}_busco"
     threads: THREADS
-    singularity:
-        f"{SING_DIR}/diamond.sif"
-    shell:
-        r"""
+    container: container_image("diamond")
+    shell: tool_command("diamond", r"""
         set -euo pipefail
-        mkdir -p {output.outdir}
+        mkdir -p {params.outdir}
 
         MINIPROT_DIR="{params.busco_dir}/run_ascomycota_odb12/miniprot_output/translated_proteins"
         METAEUK_FILE="{params.busco_dir}/run_ascomycota_odb12/metaeuk_output/combined_pred_proteins.fas"
 
         # Decide protein source (prefer miniprot if any .faa present)
         if compgen -G "$MINIPROT_DIR"/*.faa > /dev/null; then
-            PROT="{output.outdir}/{wildcards.sample}_miniprot.faa"
+            PROT="{params.outdir}/{wildcards.sample}_miniprot.faa"
             cat "$MINIPROT_DIR"/*.faa > "$PROT"
         elif [ -s "$METAEUK_FILE" ]; then
-            PROT="{output.outdir}/{wildcards.sample}_metaeuk.faa"
+            PROT="{params.outdir}/{wildcards.sample}_metaeuk.faa"
             cp "$METAEUK_FILE" "$PROT"
         else
             echo "No proteins found for BUSCO in sample {wildcards.sample}" >&2
@@ -261,7 +325,137 @@ rule diamond_blastp:
           --outfmt 102 \
           --include-lineage \
           --out "{output.tax}"
-        """
+        """)
+
+###############################
+# Standalone gene prediction  #
+###############################
+
+# BUSCO and the original diamond_blastp rule are deliberately unchanged.
+# These files form a separate evidence stream for the future GNN backend.
+
+if TIARA_MODE == "run":
+    rule run_tiara_for_genes:
+        input:
+            assembly=f"{OUTPUT_DIR}/flye_output/{PROJECT_NR}" + "{sample}_flye/assembly.fasta"
+        output:
+            classification=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/tiara/complete.classification.tsv"
+        threads: THREADS
+        container: container_image("tiara")
+        shell: tool_command("tiara", """
+            mkdir -p "$(dirname {output.classification:q})"
+            tiara -i {input.assembly:q} -o {output.classification:q} -t {threads}
+            """)
+
+if TIARA_MODE == "file":
+    rule import_tiara_for_genes:
+        input:
+            classification=TIARA_SOURCE
+        output:
+            classification=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/tiara/complete.classification.tsv"
+        shell:
+            """
+            mkdir -p "$(dirname {output.classification:q})"
+            cp {input.classification:q} {output.classification:q}
+            """
+
+if GENE_PREDICTION == "standalone":
+    rule route_gene_contigs:
+        input:
+            assembly=f"{OUTPUT_DIR}/flye_output/{PROJECT_NR}" + "{sample}_flye/assembly.fasta",
+            tiara=lambda wc: [tiara_path(wc)] if TIARA_MODE != "off" else []
+        output:
+            euk=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/routing/euk.fasta",
+            prok=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/routing/prok.fasta",
+            table=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/routing/contig_routes.tsv"
+        params:
+            tiara_arg=lambda wc: ("--tiara " + tiara_path(wc)) if TIARA_MODE != "off" else ""
+        shell:
+            """
+            python3 bin/scripts/route_tiara.py \
+              --assembly {input.assembly:q} {params.tiara_arg} \
+              --euk {output.euk:q} --prok {output.prok:q} \
+              --report {output.table:q}
+            """
+
+    rule standalone_metaeuk:
+        input:
+            assembly=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/routing/euk.fasta",
+            reference=METAEUK_REF
+        output:
+            proteins=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/metaeuk/predictions.fas"
+        params:
+            prefix=lambda wc: gp_file(wc, "metaeuk/predictions"),
+            tmp=lambda wc: gp_file(wc, "metaeuk/tmp")
+        threads: THREADS
+        container: container_image("metaeuk")
+        shell: tool_command("metaeuk", """
+            set -euo pipefail
+            mkdir -p "$(dirname {output.proteins:q})" {params.tmp:q}
+            if ! grep -q '^>' {input.assembly:q}; then
+                : > {output.proteins:q}
+            else
+                metaeuk easy-predict {input.assembly:q} {input.reference:q} \
+                    {params.prefix:q} {params.tmp:q} --threads {threads}
+                test -f {output.proteins:q}
+            fi
+            """)
+
+    rule standalone_prodigal:
+        input:
+            assembly=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/routing/prok.fasta"
+        output:
+            proteins=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/prodigal/proteins.faa",
+            gff=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/prodigal/genes.gff"
+        threads: THREADS
+        container: container_image("prodigal")
+        shell: tool_command("prodigal", """
+            set -euo pipefail
+            mkdir -p "$(dirname {output.proteins:q})"
+            if ! grep -q '^>' {input.assembly:q}; then
+                : > {output.proteins:q}
+                : > {output.gff:q}
+            else
+                prodigal -i {input.assembly:q} -a {output.proteins:q} \
+                    -o {output.gff:q} -f gff -p meta -q
+            fi
+            """)
+
+    rule normalize_standalone_proteins:
+        input:
+            assembly=f"{OUTPUT_DIR}/flye_output/{PROJECT_NR}" + "{sample}_flye/assembly.fasta",
+            metaeuk=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/metaeuk/predictions.fas",
+            prodigal=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/prodigal/proteins.faa",
+            gff=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/prodigal/genes.gff"
+        output:
+            proteins=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/combined_proteins.faa",
+            mapping=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/protein_to_contig.tsv"
+        shell:
+            """
+            python3 bin/scripts/normalize_predicted_proteins.py \
+                --assembly {input.assembly:q} --metaeuk {input.metaeuk:q} \
+                --prodigal {input.prodigal:q} --prodigal-gff {input.gff:q} \
+                --proteins {output.proteins:q} --mapping {output.mapping:q}
+            """
+
+    rule standalone_diamond_blastp:
+        input:
+            proteins=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/combined_proteins.faa",
+            database=DIAMOND_DB
+        output:
+            taxonomy=f"{OUTPUT_DIR}/gene_prediction/{PROJECT_NR}" + "{sample}/diamond_taxonomy.tsv"
+        threads: THREADS
+        container: container_image("diamond")
+        shell: tool_command("diamond", """
+            set -euo pipefail
+            if [ ! -s {input.proteins:q} ]; then
+                : > {output.taxonomy:q}
+            else
+                diamond blastp --query {input.proteins:q} --db {input.database:q} \
+                  --threads {threads} --outfmt 102 --include-lineage \
+                  --out {output.taxonomy:q}
+            fi
+            """)
 
 ################
 #   Report     #
@@ -270,20 +464,17 @@ rule diamond_blastp:
 rule render_report:
     input:
         longqc=lambda wc: f"{OUTPUT_DIR}/longqc_output/{PROJECT_NR}{wc.sample}_quality",
-        flye=lambda wc: f"{OUTPUT_DIR}/flye_output/{PROJECT_NR}{wc.sample}_flye",
+        flye=lambda wc: f"{OUTPUT_DIR}/flye_output/{PROJECT_NR}{wc.sample}_flye/assembly.fasta",
         coverm=lambda wc: f"{OUTPUT_DIR}/coverm_output/{PROJECT_NR}{wc.sample}_mean_cov",
         busco=lambda wc: f"{OUTPUT_DIR}/busco_output/{PROJECT_NR}{wc.sample}_busco",
-        diamond=lambda wc: f"{OUTPUT_DIR}/diamond_output/{PROJECT_NR}{wc.sample}_taxonomy_prots",
+        diamond=lambda wc: f"{OUTPUT_DIR}/diamond_output/{PROJECT_NR}{wc.sample}_taxonomy_prots/{PROJECT_NR}{wc.sample}_taxprot",
         telfinder=lambda wc: f"{OUTPUT_DIR}/telfinder_output/{PROJECT_NR}{wc.sample}_telomeres",
-        REPORT_SIF=f"{SING_DIR}/report.sif",
         RMD_SRC="bin/report.rmd"
     output:
         html=f"{OUTPUT_DIR}/reports/{PROJECT_NR}" + "{sample}_report.html"
     threads: THREADS
-    container:
-        f"{SING_DIR}/report.sif"
-    shell:
-        r"""
+    container: container_image("report")
+    shell: tool_command("report", r"""
         set -eu
         Rscript --vanilla -e "rmarkdown::render('$PWD/bin/report.rmd', \
             output_file = basename('$PWD/{output}'), \
@@ -297,7 +488,7 @@ rule render_report:
                 api_key    = '{API_KEY}', \
                 run_id     = as.integer(Sys.time()) \
             ))"
-        """
+        """)
 
 #############################
 #   Per-sample completion   #

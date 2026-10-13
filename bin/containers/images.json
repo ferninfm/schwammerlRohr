@@ -1,0 +1,72 @@
+{
+  "longqc": {
+    "docker": "schwammerl/longqc:local",
+    "apptainer": "bin/singularity/longqc.sif",
+    "dockerfile": "bin/containers/dockerfiles/longqc.Dockerfile",
+    "definition": "bin/definitions/longqc.def",
+    "pull": null
+  },
+  "flye": {
+    "docker": "schwammerl/flye:local",
+    "apptainer": "bin/singularity/flye.sif",
+    "dockerfile": "bin/containers/dockerfiles/flye.Dockerfile",
+    "definition": "bin/definitions/flye.def",
+    "pull": null
+  },
+  "coverm": {
+    "docker": "schwammerl/coverm:local",
+    "apptainer": "bin/singularity/coverm.sif",
+    "dockerfile": "bin/containers/dockerfiles/coverm.Dockerfile",
+    "definition": "bin/definitions/coverm.def",
+    "pull": null
+  },
+  "busco": {
+    "docker": "ezlabgva/busco:v5.8.2_cv1",
+    "apptainer": "bin/singularity/busco.sif",
+    "dockerfile": null,
+    "definition": null,
+    "pull": "docker://ezlabgva/busco:v5.8.2_cv1"
+  },
+  "diamond": {
+    "docker": "schwammerl/diamond:2.1.12",
+    "apptainer": "bin/singularity/diamond.sif",
+    "dockerfile": "bin/containers/dockerfiles/diamond.Dockerfile",
+    "definition": "bin/definitions/diamond.def",
+    "pull": null
+  },
+  "telfinder": {
+    "docker": "schwammerl/telfinder:local",
+    "apptainer": "bin/singularity/telfinder.sif",
+    "dockerfile": "bin/containers/dockerfiles/telfinder.Dockerfile",
+    "definition": "bin/definitions/telfinder.def",
+    "pull": null
+  },
+  "report": {
+    "docker": "schwammerl/report:local",
+    "apptainer": "bin/singularity/report.sif",
+    "dockerfile": "bin/containers/dockerfiles/report.Dockerfile",
+    "definition": "bin/definitions/report.def",
+    "pull": null
+  },
+  "metaeuk": {
+    "docker": "schwammerl/metaeuk:local",
+    "apptainer": "bin/singularity/metaeuk.sif",
+    "dockerfile": "bin/containers/dockerfiles/metaeuk.Dockerfile",
+    "definition": "bin/definitions/metaeuk.def",
+    "pull": null
+  },
+  "prodigal": {
+    "docker": "schwammerl/prodigal:local",
+    "apptainer": "bin/singularity/prodigal.sif",
+    "dockerfile": "bin/containers/dockerfiles/prodigal.Dockerfile",
+    "definition": "bin/definitions/prodigal.def",
+    "pull": null
+  },
+  "tiara": {
+    "docker": "schwammerl/tiara:local",
+    "apptainer": "bin/singularity/tiara.sif",
+    "dockerfile": "bin/containers/dockerfiles/tiara.Dockerfile",
+    "definition": "bin/definitions/tiara.def",
+    "pull": null
+  }
+}

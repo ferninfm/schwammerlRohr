@@ -1,0 +1,21 @@
+# Sequencing inputs and results
+PacBio_data/
+PacBio_output/
+
+# Snakemake working files
+.snakemake/
+
+# Temporary installation backups
+.schwammerl-runtime-backup-*/
+
+# Containers and databases
+*.sif
+*.dmnd
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Temporary files
+*.tmp
+*.log

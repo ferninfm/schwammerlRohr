@@ -1,0 +1,7 @@
+Bootstrap: docker
+From: continuumio/miniconda3
+%post
+    conda install -y --override-channels -c conda-forge -c bioconda tiara
+    conda clean -afy
+%environment
+    export PATH="/opt/conda/bin:$PATH"
