@@ -1,0 +1,1325 @@
+--- a/bin/ml/Cluster_ML/feature.py
++++ b/bin/ml/Cluster_ML/feature.py
+@@ -1,68 +1,68 @@
+-from pathlib import Path
+-from typing import Union
+-
+-import numpy as np
+-import pandas as pd
+-from sklearn.decomposition import PCA
+-
+-from preprocessing import gc_content_length_table, coverage_table, process_kmer_matrix, tiara_node_features
+-
+-
+-def build_feature_table(
+-    fasta_path: Union[str, Path],
+-    coverage_tsv: Union[str, Path],
+-    kmer_path: Union[str, Path],
+-    use_canonical: bool = False,
+-    kmer_pca_components: int = 0,
+-    tiara_df: pd.DataFrame | None = None,
+-    use_length: bool = False,
+-) -> tuple[pd.DataFrame, np.ndarray, int, int]:
+-    """Builds X = [coverage(1), length(0|1), kmer(n), tiara(0|4)].
+-    Returns (feature_df, X, n_tiara, n_length).
+-    GC-content is kept in feature_df for plotting only — not used as model input.
+-    k-mer downweighting happens in gnn.py after standardization.
+-    Length is log1p-transformed and standardized normally (continuous feature).
+-    """
+-    # ── Coverage + GC-Content + Länge ───────────────────────────────────────
+-    gc_df = gc_content_length_table(fasta_path).rename(columns={"contig": "contig_id"})
+-    cov_df = coverage_table(coverage_tsv)
+-    feat = gc_df.merge(cov_df, on="contig_id", how="left")
+-    feat["coverage"] = np.log1p(feat["coverage"].fillna(0.0).astype(float))
+-    feat["length_log"] = np.log1p(feat["length"].fillna(0.0).astype(float))
+-    feat = feat[["contig_id", "gc_content", "coverage", "length_log"]].set_index("contig_id")
+-
+-    # ── k-mer ────────────────────────────────────────────────────────────────
+-    kmer_df = process_kmer_matrix(kmer_path, canonical=use_canonical)
+-    n_raw = kmer_df.shape[1]
+-    mode = "kanonisch (136)" if use_canonical else "alle (256)"
+-
+-    if kmer_pca_components > 0:
+-        pca = PCA(n_components=kmer_pca_components, random_state=42)
+-        arr = pca.fit_transform(kmer_df.values)
+-        print(f"[feature] k-mer PCA: {n_raw} ({mode}) → {kmer_pca_components} Komp. "
+-              f"({pca.explained_variance_ratio_.sum():.1%} Varianz)")
+-        kmer_df = pd.DataFrame(arr, index=kmer_df.index,
+-                               columns=[f"kmer_pca_{i}" for i in range(kmer_pca_components)])
+-    else:
+-        print(f"[feature] k-mer: {n_raw} Spalten ({mode})")
+-
+-    feat = feat.join(kmer_df, how="left")
+-    feat[kmer_df.columns] = feat[kmer_df.columns].fillna(0.0)
+-
+-    # ── Basis-X: coverage [+ length] + kmer ─────────────────────────────────
+-    n_length = 0
+-    base_cols = ["coverage"]
+-    if use_length:
+-        base_cols.append("length_log")
+-        n_length = 1
+-        print("[feature] Länge als Feature aktiv (log1p-transformiert)")
+-    X = feat[base_cols + list(kmer_df.columns)].to_numpy(dtype=np.float32)
+-
+-    # ── Tiara (optional) ─────────────────────────────────────────────────────
+-    n_tiara = 0
+-    if tiara_df is not None:
+-        tiara_feat = tiara_node_features(feat.index, tiara_df)
+-        X = np.hstack([X, tiara_feat])
+-        n_tiara = tiara_feat.shape[1]
+-
+-    return feat, X, n_tiara, n_length
++from pathlib import Path
++from typing import Union
++
++import numpy as np
++import pandas as pd
++from sklearn.decomposition import PCA
++
++from preprocessing import gc_content_length_table, coverage_table, process_kmer_matrix, tiara_node_features
++
++
++def build_feature_table(
++    fasta_path: Union[str, Path],
++    coverage_tsv: Union[str, Path],
++    kmer_path: Union[str, Path],
++    use_canonical: bool = False,
++    kmer_pca_components: int = 0,
++    tiara_df: pd.DataFrame | None = None,
++    use_length: bool = False,
++) -> tuple[pd.DataFrame, np.ndarray, int, int]:
++    """Builds X = [coverage(1), length(0|1), kmer(n), tiara(0|4)].
++    Returns (feature_df, X, n_tiara, n_length).
++    GC-content is kept in feature_df for plotting only — not used as model input.
++    k-mer downweighting happens in gnn.py after standardization.
++    Length is log1p-transformed and standardized normally (continuous feature).
++    """
++    # ── Coverage + GC-Content + Länge ───────────────────────────────────────
++    gc_df = gc_content_length_table(fasta_path).rename(columns={"contig": "contig_id"})
++    cov_df = coverage_table(coverage_tsv)
++    feat = gc_df.merge(cov_df, on="contig_id", how="left")
++    feat["coverage"] = np.log1p(feat["coverage"].fillna(0.0).astype(float))
++    feat["length_log"] = np.log1p(feat["length"].fillna(0.0).astype(float))
++    feat = feat[["contig_id", "gc_content", "coverage", "length_log"]].set_index("contig_id")
++
++    # ── k-mer ────────────────────────────────────────────────────────────────
++    kmer_df = process_kmer_matrix(kmer_path, canonical=use_canonical)
++    n_raw = kmer_df.shape[1]
++    mode = "kanonisch (136)" if use_canonical else "alle (256)"
++
++    if kmer_pca_components > 0:
++        pca = PCA(n_components=kmer_pca_components, random_state=42)
++        arr = pca.fit_transform(kmer_df.values)
++        print(f"[feature] k-mer PCA: {n_raw} ({mode}) → {kmer_pca_components} Komp. "
++              f"({pca.explained_variance_ratio_.sum():.1%} Varianz)")
++        kmer_df = pd.DataFrame(arr, index=kmer_df.index,
++                               columns=[f"kmer_pca_{i}" for i in range(kmer_pca_components)])
++    else:
++        print(f"[feature] k-mer: {n_raw} Spalten ({mode})")
++
++    feat = feat.join(kmer_df, how="left")
++    feat[kmer_df.columns] = feat[kmer_df.columns].fillna(0.0)
++
++    # ── Basis-X: coverage [+ length] + kmer ─────────────────────────────────
++    n_length = 0
++    base_cols = ["coverage"]
++    if use_length:
++        base_cols.append("length_log")
++        n_length = 1
++        print("[feature] Länge als Feature aktiv (log1p-transformiert)")
++    X = feat[base_cols + list(kmer_df.columns)].to_numpy(dtype=np.float32)
++
++    # ── Tiara (optional) ─────────────────────────────────────────────────────
++    n_tiara = 0
++    if tiara_df is not None:
++        tiara_feat = tiara_node_features(feat.index, tiara_df)
++        X = np.hstack([X, tiara_feat])
++        n_tiara = tiara_feat.shape[1]
++
++    return feat, X, n_tiara, n_length
+--- a/bin/ml/Cluster_ML/gnn.py
++++ b/bin/ml/Cluster_ML/gnn.py
+@@ -1,149 +1,149 @@
+-import numpy as np
+-import torch
+-import torch.nn as nn
+-import torch.nn.functional as F
+-from torch_geometric.data import Data
+-from torch_geometric.nn import GCNConv, GAE
+-from torch_geometric.utils import add_self_loops, negative_sampling
+-
+-
+-# ── Hilfsfunktion ─────────────────────────────────────────────────────────────
+-
+-def standardize_np(X: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+-    """Z-score standardization per column."""
+-    mu = X.mean(axis=0, keepdims=True)
+-    sd = X.std(axis=0, keepdims=True)
+-    return (X - mu) / (sd + eps)
+-
+-
+-# ── Modell ────────────────────────────────────────────────────────────────────
+-
+-class Encoder(nn.Module):
+-    """2-layer GCN encoder: node features + graph → embeddings Z."""
+-    def __init__(self, in_channels: int, hidden: int = 64, out_channels: int = 8, dropout: float = 0.1):
+-        super().__init__()
+-        self.conv1 = GCNConv(in_channels, hidden)
+-        self.conv2 = GCNConv(hidden, out_channels)
+-        self.bn1 = nn.BatchNorm1d(hidden)
+-        self.drop = nn.Dropout(p=dropout)
+-
+-    def forward(self, x, edge_index, edge_weight=None):
+-        x = F.relu(self.bn1(self.conv1(x, edge_index, edge_weight=edge_weight)))
+-        x = self.drop(x)
+-        return self.conv2(x, edge_index, edge_weight=edge_weight)
+-
+-
+-class FeatureDecoder(nn.Module):
+-    """Reconstructs input features from embeddings Z (prevents Z from ignoring feature signal)."""
+-    def __init__(self, in_channels: int, out_channels: int, hidden: int = 64):
+-        super().__init__()
+-        self.net = nn.Sequential(
+-            nn.Linear(in_channels, hidden),
+-            nn.ReLU(),
+-            nn.Linear(hidden, out_channels),
+-        )
+-
+-    def forward(self, z: torch.Tensor) -> torch.Tensor:
+-        return self.net(z)
+-
+-
+-# ── Training ──────────────────────────────────────────────────────────────────
+-
+-def train_gae_embeddings(
+-    X: np.ndarray,
+-    edge_index: np.ndarray,
+-    edge_weight: np.ndarray = None,
+-    out_dim: int = 8,
+-    hidden: int = 64,
+-    epochs: int = 1000,
+-    lr: float = 5e-4,
+-    add_loops: bool = True,
+-    seed: int = 0,
+-    alpha: float = 0.5,  # 0 = only feature loss | 1 = only graph loss
+-    dropout: float = 0.1,
+-    kmer_weight: float = 1.0,
+-    n_tiara_features: int = 0,
+-    n_length_features: int = 0,
+-) -> np.ndarray:
+-    """Trains GAE, returns node embeddings Z of shape (n_nodes, out_dim).
+-
+-    Feature layout in X: [coverage(1), length(0|1), kmer(n_kmer), tiara(0|4)]
+-      - coverage: standardized, no downweighting
+-      - length: standardized, no downweighting (continuous)
+-      - kmer: standardized, then multiplied by kmer_weight
+-      - tiara: binary (0/1), not standardized, no downweighting
+-    """
+-    torch.manual_seed(seed)
+-    np.random.seed(seed)
+-
+-    # ── Standardisierung + k-mer Downweighting ───────────────────────────────
+-    Xs = standardize_np(X).astype(np.float32)
+-    if n_tiara_features > 0:
+-        # Tiara is binary — restore raw values after standardization
+-        Xs[:, -n_tiara_features:] = X[:, -n_tiara_features:].astype(np.float32)
+-    n_kmer = Xs.shape[1] - 1 - n_length_features - n_tiara_features
+-    kmer_start = 1 + n_length_features
+-    if kmer_weight != 1.0 and n_kmer > 0:
+-        Xs[:, kmer_start:kmer_start + n_kmer] *= kmer_weight
+-        print(f"[GNN] k-mer downweighting: x{kmer_weight} on {n_kmer} columns")
+-
+-    x = torch.tensor(Xs, dtype=torch.float32)
+-    ei = torch.tensor(edge_index, dtype=torch.long)
+-    ew = torch.tensor(edge_weight, dtype=torch.float32) if edge_weight is not None else None
+-
+-    if add_loops:
+-        ei, ew = add_self_loops(ei, edge_attr=ew, num_nodes=x.size(0), fill_value=1.0)
+-
+-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+-    data = Data(x=x, edge_index=ei, edge_weight=ew).to(device)
+-    print(f"[GNN] Device: {device} | Features: {x.size(1)} | Hidden: {hidden} | Out: {out_dim}")
+-
+-    gae_model = GAE(Encoder(x.size(1), hidden=hidden, out_channels=out_dim, dropout=dropout)).to(device)
+-    feat_decoder = FeatureDecoder(out_dim, x.size(1), hidden=hidden).to(device)
+-
+-    opt = torch.optim.Adam(
+-        list(gae_model.parameters()) + list(feat_decoder.parameters()),
+-        lr=lr, weight_decay=1e-4,
+-    )
+-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+-
+-    print(f"[GNN] Training {epochs} epochs | alpha={alpha}")
+-    for epoch in range(1, epochs + 1):
+-        gae_model.train()
+-        feat_decoder.train()
+-        opt.zero_grad()
+-
+-        z = gae_model.encode(data.x, data.edge_index, data.edge_weight)
+-
+-        loss_link = torch.tensor(0.0, device=device)
+-        if alpha > 0.0 and data.edge_index.size(1) > 0:
+-            neg_ei = negative_sampling(data.edge_index, num_nodes=data.num_nodes,
+-                                       num_neg_samples=data.edge_index.size(1))
+-            loss_link = gae_model.recon_loss(z, data.edge_index, neg_ei)
+-
+-        loss_feat = torch.tensor(0.0, device=device)
+-        if alpha < 1.0:
+-            loss_feat = F.mse_loss(feat_decoder(z), data.x)
+-
+-        loss = alpha * loss_link + (1.0 - alpha) * loss_feat
+-        loss.backward()
+-        torch.nn.utils.clip_grad_norm_(
+-            list(gae_model.parameters()) + list(feat_decoder.parameters()), max_norm=1.0
+-        )
+-        opt.step()
+-        scheduler.step()
+-
+-        if epoch % 100 == 0 or epoch == 1:
+-            print(f"[GNN] Epoch {epoch:4d}/{epochs} | "
+-                  f"loss={loss.item():.4f}  (link={loss_link.item():.4f}, feat={loss_feat.item():.4f})")
+-
+-    # ── Embeddings extrahieren ────────────────────────────────────────────────
+-    gae_model.eval()
+-    with torch.no_grad():
+-        Z = gae_model.encode(data.x, data.edge_index, data.edge_weight).cpu().numpy()
+-
+-    if np.isnan(Z).any():
+-        print(f"[GNN] WARNUNG: {int(np.isnan(Z).sum())} NaN in Z — replaced with 0")
+-        Z = np.nan_to_num(Z, nan=0.0)
+-
+-    return Z
++import numpy as np
++import torch
++import torch.nn as nn
++import torch.nn.functional as F
++from torch_geometric.data import Data
++from torch_geometric.nn import GCNConv, GAE
++from torch_geometric.utils import add_self_loops, negative_sampling
++
++
++# ── Hilfsfunktion ─────────────────────────────────────────────────────────────
++
++def standardize_np(X: np.ndarray, eps: float = 1e-8) -> np.ndarray:
++    """Z-score standardization per column."""
++    mu = X.mean(axis=0, keepdims=True)
++    sd = X.std(axis=0, keepdims=True)
++    return (X - mu) / (sd + eps)
++
++
++# ── Modell ────────────────────────────────────────────────────────────────────
++
++class Encoder(nn.Module):
++    """2-layer GCN encoder: node features + graph → embeddings Z."""
++    def __init__(self, in_channels: int, hidden: int = 64, out_channels: int = 8, dropout: float = 0.1):
++        super().__init__()
++        self.conv1 = GCNConv(in_channels, hidden)
++        self.conv2 = GCNConv(hidden, out_channels)
++        self.bn1 = nn.BatchNorm1d(hidden)
++        self.drop = nn.Dropout(p=dropout)
++
++    def forward(self, x, edge_index, edge_weight=None):
++        x = F.relu(self.bn1(self.conv1(x, edge_index, edge_weight=edge_weight)))
++        x = self.drop(x)
++        return self.conv2(x, edge_index, edge_weight=edge_weight)
++
++
++class FeatureDecoder(nn.Module):
++    """Reconstructs input features from embeddings Z (prevents Z from ignoring feature signal)."""
++    def __init__(self, in_channels: int, out_channels: int, hidden: int = 64):
++        super().__init__()
++        self.net = nn.Sequential(
++            nn.Linear(in_channels, hidden),
++            nn.ReLU(),
++            nn.Linear(hidden, out_channels),
++        )
++
++    def forward(self, z: torch.Tensor) -> torch.Tensor:
++        return self.net(z)
++
++
++# ── Training ──────────────────────────────────────────────────────────────────
++
++def train_gae_embeddings(
++    X: np.ndarray,
++    edge_index: np.ndarray,
++    edge_weight: np.ndarray = None,
++    out_dim: int = 8,
++    hidden: int = 64,
++    epochs: int = 1000,
++    lr: float = 5e-4,
++    add_loops: bool = True,
++    seed: int = 0,
++    alpha: float = 0.5,  # 0 = only feature loss | 1 = only graph loss
++    dropout: float = 0.1,
++    kmer_weight: float = 1.0,
++    n_tiara_features: int = 0,
++    n_length_features: int = 0,
++) -> np.ndarray:
++    """Trains GAE, returns node embeddings Z of shape (n_nodes, out_dim).
++
++    Feature layout in X: [coverage(1), length(0|1), kmer(n_kmer), tiara(0|4)]
++      - coverage: standardized, no downweighting
++      - length: standardized, no downweighting (continuous)
++      - kmer: standardized, then multiplied by kmer_weight
++      - tiara: binary (0/1), not standardized, no downweighting
++    """
++    torch.manual_seed(seed)
++    np.random.seed(seed)
++
++    # ── Standardisierung + k-mer Downweighting ───────────────────────────────
++    Xs = standardize_np(X).astype(np.float32)
++    if n_tiara_features > 0:
++        # Tiara is binary — restore raw values after standardization
++        Xs[:, -n_tiara_features:] = X[:, -n_tiara_features:].astype(np.float32)
++    n_kmer = Xs.shape[1] - 1 - n_length_features - n_tiara_features
++    kmer_start = 1 + n_length_features
++    if kmer_weight != 1.0 and n_kmer > 0:
++        Xs[:, kmer_start:kmer_start + n_kmer] *= kmer_weight
++        print(f"[GNN] k-mer downweighting: x{kmer_weight} on {n_kmer} columns")
++
++    x = torch.tensor(Xs, dtype=torch.float32)
++    ei = torch.tensor(edge_index, dtype=torch.long)
++    ew = torch.tensor(edge_weight, dtype=torch.float32) if edge_weight is not None else None
++
++    if add_loops:
++        ei, ew = add_self_loops(ei, edge_attr=ew, num_nodes=x.size(0), fill_value=1.0)
++
++    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
++    data = Data(x=x, edge_index=ei, edge_weight=ew).to(device)
++    print(f"[GNN] Device: {device} | Features: {x.size(1)} | Hidden: {hidden} | Out: {out_dim}")
++
++    gae_model = GAE(Encoder(x.size(1), hidden=hidden, out_channels=out_dim, dropout=dropout)).to(device)
++    feat_decoder = FeatureDecoder(out_dim, x.size(1), hidden=hidden).to(device)
++
++    opt = torch.optim.Adam(
++        list(gae_model.parameters()) + list(feat_decoder.parameters()),
++        lr=lr, weight_decay=1e-4,
++    )
++    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
++
++    print(f"[GNN] Training {epochs} epochs | alpha={alpha}")
++    for epoch in range(1, epochs + 1):
++        gae_model.train()
++        feat_decoder.train()
++        opt.zero_grad()
++
++        z = gae_model.encode(data.x, data.edge_index, data.edge_weight)
++
++        loss_link = torch.tensor(0.0, device=device)
++        if alpha > 0.0 and data.edge_index.size(1) > 0:
++            neg_ei = negative_sampling(data.edge_index, num_nodes=data.num_nodes,
++                                       num_neg_samples=data.edge_index.size(1))
++            loss_link = gae_model.recon_loss(z, data.edge_index, neg_ei)
++
++        loss_feat = torch.tensor(0.0, device=device)
++        if alpha < 1.0:
++            loss_feat = F.mse_loss(feat_decoder(z), data.x)
++
++        loss = alpha * loss_link + (1.0 - alpha) * loss_feat
++        loss.backward()
++        torch.nn.utils.clip_grad_norm_(
++            list(gae_model.parameters()) + list(feat_decoder.parameters()), max_norm=1.0
++        )
++        opt.step()
++        scheduler.step()
++
++        if epoch % 100 == 0 or epoch == 1:
++            print(f"[GNN] Epoch {epoch:4d}/{epochs} | "
++                  f"loss={loss.item():.4f}  (link={loss_link.item():.4f}, feat={loss_feat.item():.4f})")
++
++    # ── Embeddings extrahieren ────────────────────────────────────────────────
++    gae_model.eval()
++    with torch.no_grad():
++        Z = gae_model.encode(data.x, data.edge_index, data.edge_weight).cpu().numpy()
++
++    if np.isnan(Z).any():
++        print(f"[GNN] WARNUNG: {int(np.isnan(Z).sum())} NaN in Z — replaced with 0")
++        Z = np.nan_to_num(Z, nan=0.0)
++
++    return Z
+--- a/bin/ml/bam_links.py
++++ b/bin/ml/bam_links.py
+@@ -1,393 +1,393 @@
+-#!/usr/bin/env python3
+-"""
+-bam_links.py
+-
+-Derives contig-contig links from supplementary BAM alignments,
+-excluding telomeric ends.
+-
+-Equivalent to incorporate_bam_bubbles() from report_kiruna_v2.Rmd.
+-The taxonomy-reassignment part of that function is intentionally omitted —
+-it will be handled inside the GNN model.
+-
+-Contig lengths and telomere detection are derived directly from the FASTA,
+-so no separate lengths file or telomere TSV is needed.
+-
+-Telomere detection: scans the first/last --scan-window bp of each contig for
+-TTAGGG or CCCTAA repeats — the same two motifs hardcoded in incorporate_bam_bubbles().
+-
+-Usage:
+-    python bam_links.py \\
+-        --bam    <file.bam> \\
+-        --fasta  <assembly.fasta> \\
+-        --output <links.tsv> \\
+-        [--flank 10000] \\
+-        [--threshold 0.7] \\
+-        [--scan-window 500] \\
+-        [--threads 4]
+-"""
+-
+-import argparse
+-import sys
+-from collections import defaultdict
+-from pathlib import Path
+-
+-import pysam
+-
+-# ── Constants ────────────────────────────────────────────────────────────────
+-
+-# Motifs checked in incorporate_bam_bubbles() — hardcoded in the R code
+-TELOMERE_MOTIFS = {"TTAGGG", "CCCTAA"}
+-
+-FLANK_DEFAULT       = 10_000
+-THRESHOLD_DEFAULT   = 0.5
+-SCAN_WINDOW_DEFAULT = 500
+-
+-
+-# ── CLI ───────────────────────────────────────────────────────────────────────
+-
+-def parse_args() -> argparse.Namespace:
+-    p = argparse.ArgumentParser(
+-        description=__doc__,
+-        formatter_class=argparse.RawDescriptionHelpFormatter,
+-    )
+-    p.add_argument("--bam",         required=True,
+-                   help="BAM file (sorted, with supplementary alignments)")
+-    p.add_argument("--fasta",       required=True,
+-                   help="Assembly FASTA (assembly.fasta from Flye)")
+-    p.add_argument("--output",      required=True,
+-                   help="Output TSV: contig_a  contig_b  jaccard")
+-    p.add_argument("--flank",       type=int,   default=FLANK_DEFAULT,
+-                   help=f"Flank size in bp (default: {FLANK_DEFAULT})")
+-    p.add_argument("--threshold",   type=float, default=THRESHOLD_DEFAULT,
+-                   help=f"Min Jaccard to keep edge (default: {THRESHOLD_DEFAULT})")
+-    p.add_argument("--scan-window", type=int,   default=SCAN_WINDOW_DEFAULT,
+-                   help=f"Bases scanned at each contig end for telomere motifs "
+-                        f"(default: {SCAN_WINDOW_DEFAULT})")
+-    p.add_argument("--threads",     type=int,   default=4,
+-                   help="Threads for BAM reading (default: 4)")
+-    return p.parse_args()
+-
+-
+-# ── FASTA: lengths + telomere detection ──────────────────────────────────────
+-
+-def read_fasta(
+-    fasta_path:  str,
+-    scan_window: int,
+-) -> tuple[dict[str, int], set, set]:
+-    """
+-    Parse the assembly FASTA in one pass.
+-
+-    Returns:
+-        lengths   — {contig_id: length}
+-        left_tel  — contigs with TTAGGG/CCCTAA in the first scan_window bp
+-        right_tel — contigs with TTAGGG/CCCTAA in the last  scan_window bp
+-
+-    Telomere detection mirrors the two motifs hardcoded in
+-    incorporate_bam_bubbles():
+-        telomeres$leftmotif  %in% c("TTAGGG", "CCCTAA")
+-        telomeres$rightmotif %in% c("TTAGGG", "CCCTAA")
+-    """
+-    lengths:   dict[str, int] = {}
+-    left_tel:  set            = set()
+-    right_tel: set            = set()
+-
+-    current_name: str       = ""
+-    current_seq:  list[str] = []
+-
+-    def _process(name: str, seq_parts: list[str]) -> None:
+-        seq = "".join(seq_parts).upper()
+-        lengths[name] = len(seq)
+-
+-        left_end  = seq[:scan_window]
+-        right_end = seq[-scan_window:]
+-
+-        if any(m in left_end  for m in TELOMERE_MOTIFS):
+-            left_tel.add(name)
+-        if any(m in right_end for m in TELOMERE_MOTIFS):
+-            right_tel.add(name)
+-
+-    with open(fasta_path) as fh:
+-        for line in fh:
+-            line = line.rstrip()
+-            if not line:
+-                continue
+-            if line.startswith(">"):
+-                if current_name:
+-                    _process(current_name, current_seq)
+-                # contig name is everything up to the first space
+-                current_name = line[1:].split()[0]
+-                current_seq  = []
+-            else:
+-                current_seq.append(line)
+-
+-    if current_name:
+-        _process(current_name, current_seq)
+-
+-    return lengths, left_tel, right_tel
+-
+-
+-# ── Include-range logic (mirrors R exactly) ───────────────────────────────────
+-
+-def build_include_ranges(
+-    lengths:   dict[str, int],
+-    left_tel:  set,
+-    right_tel: set,
+-    flank:     int,
+-) -> dict[str, tuple[int, int, int, int]]:
+-    """
+-    For each contig build (sl, el, sr, er) — the two flank intervals to use.
+-    Coordinates are 0-based, half-open: [sl, el) and [sr, er).
+-    A deactivated flank is stored as equal start/end (sl==el or sr==er).
+-
+-    Mirrors the R logic in incorporate_bam_bubbles():
+-      sl=1, el=10000, sr=len-10000, er=len   (R 1-based)
+-    → sl=0, el=10000, sr=len-10000, er=len   (Python 0-based)
+-    """
+-    ranges: dict[str, tuple[int, int, int, int]] = {}
+-
+-    for contig, length in lengths.items():
+-
+-        # Initial flanks
+-        sl = 0
+-        el = min(flank, length)
+-        sr = max(0, length - flank)
+-        er = length
+-
+-        # R: include_ranges$sr[include_ranges$sr < 1] <- 1
+-        if sr < 1:
+-            sr = 1
+-
+-        # Telomere exclusion
+-        if contig in left_tel:
+-            sl, el = 0, 0
+-        if contig in right_tel:
+-            sr, er = 0, 0
+-
+-        # R: Take out duplicated (sr==1 → right flank overlaps left start)
+-        if sr == 1:
+-            sr, er = 0, 0
+-
+-        # Collapse overlapping flanks into single range
+-        # R: ir <- el > sr & sr != 0 → el=er, sr=0, er=0
+-        if sr != 0 and el > sr:
+-            el = er
+-            sr, er = 0, 0
+-
+-        ranges[contig] = (sl, el, sr, er)
+-
+-    return ranges
+-
+-
+-def _pos_in_range(pos: int, sl: int, el: int, sr: int, er: int) -> bool:
+-    """True if 0-based start position falls in either active flank interval."""
+-    in_left  = el > sl and sl <= pos < el
+-    in_right = er > sr and sr <= pos < er
+-    return in_left or in_right
+-
+-
+-def _assign_flank(pos: int, length: int, contig: str) -> str:
+-    """Mirrors R: pos >= tlen/2 → _r, else → _l."""
+-    if pos >= length / 2:
+-        return f"{contig}_r"
+-    return f"{contig}_l"
+-
+-
+-# ── BAM reading ───────────────────────────────────────────────────────────────
+-
+-def collect_flank_reads(
+-    bam_path: str,
+-    ranges:   dict[str, tuple[int, int, int, int]],
+-    lengths:  dict[str, int],
+-    threads:  int,
+-) -> dict[str, set]:
+-    """
+-    Return {flank_id: set_of_read_qnames}.
+-
+-    Mirrors R logic:
+-      1. Find qnames of reads with flag 2048 or 2064 (supplementary).
+-      2. Keep ALL alignments (primary + supplementary) of those reads.
+-      3. Filter to positions within include_ranges.
+-      4. Label each read as contig_l or contig_r.
+-    """
+-    # Pass 1: supplementary qnames — use pysam native flag instead of exact values
+-    print("[bam_links] Pass 1 — collecting supplementary read names ...", flush=True)
+-    supp_qnames: set[str] = set()
+-
+-    with pysam.AlignmentFile(bam_path, "rb", threads=threads) as bam:
+-        for read in bam.fetch(until_eof=True):
+-            if read.is_supplementary:
+-                supp_qnames.add(read.query_name)
+-
+-    print(f"[bam_links]   {len(supp_qnames):,} reads with supplementary alignments",
+-          flush=True)
+-
+-    # Pass 2: assign to flanks
+-    print("[bam_links] Pass 2 — assigning reads to flanks ...", flush=True)
+-    flank_reads: dict[str, set] = defaultdict(set)
+-    skipped_range     = 0
+-    skipped_no_contig = 0
+-
+-    with pysam.AlignmentFile(bam_path, "rb", threads=threads) as bam:
+-        for read in bam.fetch(until_eof=True):
+-            if read.query_name not in supp_qnames:
+-                continue
+-
+-            contig = read.reference_name
+-            if contig is None or contig not in ranges:
+-                skipped_no_contig += 1
+-                continue
+-
+-            pos = read.reference_start  # 0-based
+-            sl, el, sr, er = ranges[contig]
+-
+-            if not _pos_in_range(pos, sl, el, sr, er):
+-                skipped_range += 1
+-                continue
+-
+-            flank_id = _assign_flank(pos, lengths[contig], contig)
+-            flank_reads[flank_id].add(read.query_name)
+-
+-    total = sum(len(v) for v in flank_reads.values())
+-    print(
+-        f"[bam_links]   {total:,} read-flank assignments across {len(flank_reads)} flanks",
+-        flush=True,
+-    )
+-    if skipped_range or skipped_no_contig:
+-        print(
+-            f"[bam_links]   skipped: {skipped_range:,} out-of-range, "
+-            f"{skipped_no_contig:,} contig not in FASTA",
+-            flush=True,
+-        )
+-
+-    return dict(flank_reads)
+-
+-
+-# ── Jaccard computation ───────────────────────────────────────────────────────
+-
+-def compute_jaccard_edges(
+-    flank_reads: dict[str, set],
+-    threshold:   float,
+-) -> list[tuple[str, str, float]]:
+-    """
+-    Compute Jaccard for every flank pair.
+-
+-    Mirrors R:
+-        sum(foo_net[,fa]!=0 & foo_net[,fb]!=0) /
+-        sum(foo_net[,fa]!=0 | foo_net[,fb]!=0)
+-    which is the Jaccard index on the read sets.
+-    """
+-    flanks  = list(flank_reads.keys())
+-    n       = len(flanks)
+-    n_pairs = n * (n - 1) // 2
+-
+-    print(
+-        f"[bam_links] Computing Jaccard for {n} flanks ({n_pairs:,} pairs) ...",
+-        flush=True,
+-    )
+-
+-    edges: list[tuple[str, str, float]] = []
+-
+-    for i, fa in enumerate(flanks):
+-        sa = flank_reads[fa]
+-        for fb in flanks[i + 1:]:
+-            sb = flank_reads[fb]
+-
+-            intersection = len(sa & sb)
+-            if intersection == 0:
+-                continue
+-
+-            jaccard = intersection / len(sa | sb)
+-            if jaccard >= threshold:
+-                edges.append((fa, fb, jaccard))
+-
+-    print(
+-        f"[bam_links]   {len(edges):,} flank-flank edges with Jaccard >= {threshold}",
+-        flush=True,
+-    )
+-    return edges
+-
+-
+-# ── Flank → Contig edges ──────────────────────────────────────────────────────
+-
+-def flanks_to_contig_edges(
+-    flank_edges: list[tuple[str, str, float]],
+-) -> list[tuple[str, str, float]]:
+-    """
+-    Convert flank-level edges to contig-level edges.
+-    Same-contig pairs (l↔r) are dropped.
+-    If multiple flank pairs link the same contig pair, keep max Jaccard.
+-    """
+-    best: dict[tuple[str, str], float] = {}
+-
+-    for fa, fb, j in flank_edges:
+-        ca = fa.rsplit("_", 1)[0]
+-        cb = fb.rsplit("_", 1)[0]
+-
+-        if ca == cb:
+-            continue
+-
+-        key = (min(ca, cb), max(ca, cb))
+-        if j > best.get(key, 0.0):
+-            best[key] = j
+-
+-    result = [(a, b, j) for (a, b), j in sorted(best.items())]
+-    print(f"[bam_links]   {len(result):,} contig-contig edges", flush=True)
+-    return result
+-
+-
+-# ── Main ──────────────────────────────────────────────────────────────────────
+-
+-def main() -> None:
+-    args = parse_args()
+-
+-    # --- FASTA: lengths + telomere detection ---
+-    print("[bam_links] Reading FASTA ...", flush=True)
+-    lengths, left_tel, right_tel = read_fasta(args.fasta, args.scan_window)
+-    print(
+-        f"[bam_links]   {len(lengths):,} contigs | "
+-        f"{len(left_tel)} left-telomere ends | "
+-        f"{len(right_tel)} right-telomere ends",
+-        flush=True,
+-    )
+-
+-    # --- Include ranges ---
+-    ranges = build_include_ranges(lengths, left_tel, right_tel, args.flank)
+-
+-    fully_excluded = sum(1 for sl, el, sr, er in ranges.values() if sl == el == sr == er == 0)
+-    if fully_excluded:
+-        print(
+-            f"[bam_links]   {fully_excluded} contigs fully excluded "
+-            f"(both ends telomeric or too short)",
+-            flush=True,
+-        )
+-
+-    # --- BAM ---
+-    flank_reads = collect_flank_reads(args.bam, ranges, lengths, args.threads)
+-
+-    if not flank_reads:
+-        print(
+-            "[bam_links] ERROR: no flank reads collected. "
+-            "Check that the BAM contains supplementary alignments and that "
+-            "contig names match between BAM and FASTA.",
+-            file=sys.stderr,
+-        )
+-        sys.exit(1)
+-
+-    # --- Jaccard → contig edges ---
+-    flank_edges  = compute_jaccard_edges(flank_reads, args.threshold)
+-    contig_edges = flanks_to_contig_edges(flank_edges)
+-
+-    # --- Write output ---
+-    out = Path(args.output)
+-    out.parent.mkdir(parents=True, exist_ok=True)
+-
+-    with out.open("w") as fh:
+-        fh.write("contig_a\tcontig_b\tjaccard\n")
+-        for a, b, j in contig_edges:
+-            fh.write(f"{a}\t{b}\t{j:.6f}\n")
+-
+-    print(f"[bam_links] Done → {out}", flush=True)
+-
+-
+-if __name__ == "__main__":
+-    main()
++#!/usr/bin/env python3
++"""
++bam_links.py
++
++Derives contig-contig links from supplementary BAM alignments,
++excluding telomeric ends.
++
++Equivalent to incorporate_bam_bubbles() from report_kiruna_v2.Rmd.
++The taxonomy-reassignment part of that function is intentionally omitted —
++it will be handled inside the GNN model.
++
++Contig lengths and telomere detection are derived directly from the FASTA,
++so no separate lengths file or telomere TSV is needed.
++
++Telomere detection: scans the first/last --scan-window bp of each contig for
++TTAGGG or CCCTAA repeats — the same two motifs hardcoded in incorporate_bam_bubbles().
++
++Usage:
++    python bam_links.py \\
++        --bam    <file.bam> \\
++        --fasta  <assembly.fasta> \\
++        --output <links.tsv> \\
++        [--flank 10000] \\
++        [--threshold 0.7] \\
++        [--scan-window 500] \\
++        [--threads 4]
++"""
++
++import argparse
++import sys
++from collections import defaultdict
++from pathlib import Path
++
++import pysam
++
++# ── Constants ────────────────────────────────────────────────────────────────
++
++# Motifs checked in incorporate_bam_bubbles() — hardcoded in the R code
++TELOMERE_MOTIFS = {"TTAGGG", "CCCTAA"}
++
++FLANK_DEFAULT       = 10_000
++THRESHOLD_DEFAULT   = 0.5
++SCAN_WINDOW_DEFAULT = 500
++
++
++# ── CLI ───────────────────────────────────────────────────────────────────────
++
++def parse_args() -> argparse.Namespace:
++    p = argparse.ArgumentParser(
++        description=__doc__,
++        formatter_class=argparse.RawDescriptionHelpFormatter,
++    )
++    p.add_argument("--bam",         required=True,
++                   help="BAM file (sorted, with supplementary alignments)")
++    p.add_argument("--fasta",       required=True,
++                   help="Assembly FASTA (assembly.fasta from Flye)")
++    p.add_argument("--output",      required=True,
++                   help="Output TSV: contig_a  contig_b  jaccard")
++    p.add_argument("--flank",       type=int,   default=FLANK_DEFAULT,
++                   help=f"Flank size in bp (default: {FLANK_DEFAULT})")
++    p.add_argument("--threshold",   type=float, default=THRESHOLD_DEFAULT,
++                   help=f"Min Jaccard to keep edge (default: {THRESHOLD_DEFAULT})")
++    p.add_argument("--scan-window", type=int,   default=SCAN_WINDOW_DEFAULT,
++                   help=f"Bases scanned at each contig end for telomere motifs "
++                        f"(default: {SCAN_WINDOW_DEFAULT})")
++    p.add_argument("--threads",     type=int,   default=4,
++                   help="Threads for BAM reading (default: 4)")
++    return p.parse_args()
++
++
++# ── FASTA: lengths + telomere detection ──────────────────────────────────────
++
++def read_fasta(
++    fasta_path:  str,
++    scan_window: int,
++) -> tuple[dict[str, int], set, set]:
++    """
++    Parse the assembly FASTA in one pass.
++
++    Returns:
++        lengths   — {contig_id: length}
++        left_tel  — contigs with TTAGGG/CCCTAA in the first scan_window bp
++        right_tel — contigs with TTAGGG/CCCTAA in the last  scan_window bp
++
++    Telomere detection mirrors the two motifs hardcoded in
++    incorporate_bam_bubbles():
++        telomeres$leftmotif  %in% c("TTAGGG", "CCCTAA")
++        telomeres$rightmotif %in% c("TTAGGG", "CCCTAA")
++    """
++    lengths:   dict[str, int] = {}
++    left_tel:  set            = set()
++    right_tel: set            = set()
++
++    current_name: str       = ""
++    current_seq:  list[str] = []
++
++    def _process(name: str, seq_parts: list[str]) -> None:
++        seq = "".join(seq_parts).upper()
++        lengths[name] = len(seq)
++
++        left_end  = seq[:scan_window]
++        right_end = seq[-scan_window:]
++
++        if any(m in left_end  for m in TELOMERE_MOTIFS):
++            left_tel.add(name)
++        if any(m in right_end for m in TELOMERE_MOTIFS):
++            right_tel.add(name)
++
++    with open(fasta_path) as fh:
++        for line in fh:
++            line = line.rstrip()
++            if not line:
++                continue
++            if line.startswith(">"):
++                if current_name:
++                    _process(current_name, current_seq)
++                # contig name is everything up to the first space
++                current_name = line[1:].split()[0]
++                current_seq  = []
++            else:
++                current_seq.append(line)
++
++    if current_name:
++        _process(current_name, current_seq)
++
++    return lengths, left_tel, right_tel
++
++
++# ── Include-range logic (mirrors R exactly) ───────────────────────────────────
++
++def build_include_ranges(
++    lengths:   dict[str, int],
++    left_tel:  set,
++    right_tel: set,
++    flank:     int,
++) -> dict[str, tuple[int, int, int, int]]:
++    """
++    For each contig build (sl, el, sr, er) — the two flank intervals to use.
++    Coordinates are 0-based, half-open: [sl, el) and [sr, er).
++    A deactivated flank is stored as equal start/end (sl==el or sr==er).
++
++    Mirrors the R logic in incorporate_bam_bubbles():
++      sl=1, el=10000, sr=len-10000, er=len   (R 1-based)
++    → sl=0, el=10000, sr=len-10000, er=len   (Python 0-based)
++    """
++    ranges: dict[str, tuple[int, int, int, int]] = {}
++
++    for contig, length in lengths.items():
++
++        # Initial flanks
++        sl = 0
++        el = min(flank, length)
++        sr = max(0, length - flank)
++        er = length
++
++        # R: include_ranges$sr[include_ranges$sr < 1] <- 1
++        if sr < 1:
++            sr = 1
++
++        # Telomere exclusion
++        if contig in left_tel:
++            sl, el = 0, 0
++        if contig in right_tel:
++            sr, er = 0, 0
++
++        # R: Take out duplicated (sr==1 → right flank overlaps left start)
++        if sr == 1:
++            sr, er = 0, 0
++
++        # Collapse overlapping flanks into single range
++        # R: ir <- el > sr & sr != 0 → el=er, sr=0, er=0
++        if sr != 0 and el > sr:
++            el = er
++            sr, er = 0, 0
++
++        ranges[contig] = (sl, el, sr, er)
++
++    return ranges
++
++
++def _pos_in_range(pos: int, sl: int, el: int, sr: int, er: int) -> bool:
++    """True if 0-based start position falls in either active flank interval."""
++    in_left  = el > sl and sl <= pos < el
++    in_right = er > sr and sr <= pos < er
++    return in_left or in_right
++
++
++def _assign_flank(pos: int, length: int, contig: str) -> str:
++    """Mirrors R: pos >= tlen/2 → _r, else → _l."""
++    if pos >= length / 2:
++        return f"{contig}_r"
++    return f"{contig}_l"
++
++
++# ── BAM reading ───────────────────────────────────────────────────────────────
++
++def collect_flank_reads(
++    bam_path: str,
++    ranges:   dict[str, tuple[int, int, int, int]],
++    lengths:  dict[str, int],
++    threads:  int,
++) -> dict[str, set]:
++    """
++    Return {flank_id: set_of_read_qnames}.
++
++    Mirrors R logic:
++      1. Find qnames of reads with flag 2048 or 2064 (supplementary).
++      2. Keep ALL alignments (primary + supplementary) of those reads.
++      3. Filter to positions within include_ranges.
++      4. Label each read as contig_l or contig_r.
++    """
++    # Pass 1: supplementary qnames — use pysam native flag instead of exact values
++    print("[bam_links] Pass 1 — collecting supplementary read names ...", flush=True)
++    supp_qnames: set[str] = set()
++
++    with pysam.AlignmentFile(bam_path, "rb", threads=threads) as bam:
++        for read in bam.fetch(until_eof=True):
++            if read.is_supplementary:
++                supp_qnames.add(read.query_name)
++
++    print(f"[bam_links]   {len(supp_qnames):,} reads with supplementary alignments",
++          flush=True)
++
++    # Pass 2: assign to flanks
++    print("[bam_links] Pass 2 — assigning reads to flanks ...", flush=True)
++    flank_reads: dict[str, set] = defaultdict(set)
++    skipped_range     = 0
++    skipped_no_contig = 0
++
++    with pysam.AlignmentFile(bam_path, "rb", threads=threads) as bam:
++        for read in bam.fetch(until_eof=True):
++            if read.query_name not in supp_qnames:
++                continue
++
++            contig = read.reference_name
++            if contig is None or contig not in ranges:
++                skipped_no_contig += 1
++                continue
++
++            pos = read.reference_start  # 0-based
++            sl, el, sr, er = ranges[contig]
++
++            if not _pos_in_range(pos, sl, el, sr, er):
++                skipped_range += 1
++                continue
++
++            flank_id = _assign_flank(pos, lengths[contig], contig)
++            flank_reads[flank_id].add(read.query_name)
++
++    total = sum(len(v) for v in flank_reads.values())
++    print(
++        f"[bam_links]   {total:,} read-flank assignments across {len(flank_reads)} flanks",
++        flush=True,
++    )
++    if skipped_range or skipped_no_contig:
++        print(
++            f"[bam_links]   skipped: {skipped_range:,} out-of-range, "
++            f"{skipped_no_contig:,} contig not in FASTA",
++            flush=True,
++        )
++
++    return dict(flank_reads)
++
++
++# ── Jaccard computation ───────────────────────────────────────────────────────
++
++def compute_jaccard_edges(
++    flank_reads: dict[str, set],
++    threshold:   float,
++) -> list[tuple[str, str, float]]:
++    """
++    Compute Jaccard for every flank pair.
++
++    Mirrors R:
++        sum(foo_net[,fa]!=0 & foo_net[,fb]!=0) /
++        sum(foo_net[,fa]!=0 | foo_net[,fb]!=0)
++    which is the Jaccard index on the read sets.
++    """
++    flanks  = list(flank_reads.keys())
++    n       = len(flanks)
++    n_pairs = n * (n - 1) // 2
++
++    print(
++        f"[bam_links] Computing Jaccard for {n} flanks ({n_pairs:,} pairs) ...",
++        flush=True,
++    )
++
++    edges: list[tuple[str, str, float]] = []
++
++    for i, fa in enumerate(flanks):
++        sa = flank_reads[fa]
++        for fb in flanks[i + 1:]:
++            sb = flank_reads[fb]
++
++            intersection = len(sa & sb)
++            if intersection == 0:
++                continue
++
++            jaccard = intersection / len(sa | sb)
++            if jaccard >= threshold:
++                edges.append((fa, fb, jaccard))
++
++    print(
++        f"[bam_links]   {len(edges):,} flank-flank edges with Jaccard >= {threshold}",
++        flush=True,
++    )
++    return edges
++
++
++# ── Flank → Contig edges ──────────────────────────────────────────────────────
++
++def flanks_to_contig_edges(
++    flank_edges: list[tuple[str, str, float]],
++) -> list[tuple[str, str, float]]:
++    """
++    Convert flank-level edges to contig-level edges.
++    Same-contig pairs (l↔r) are dropped.
++    If multiple flank pairs link the same contig pair, keep max Jaccard.
++    """
++    best: dict[tuple[str, str], float] = {}
++
++    for fa, fb, j in flank_edges:
++        ca = fa.rsplit("_", 1)[0]
++        cb = fb.rsplit("_", 1)[0]
++
++        if ca == cb:
++            continue
++
++        key = (min(ca, cb), max(ca, cb))
++        if j > best.get(key, 0.0):
++            best[key] = j
++
++    result = [(a, b, j) for (a, b), j in sorted(best.items())]
++    print(f"[bam_links]   {len(result):,} contig-contig edges", flush=True)
++    return result
++
++
++# ── Main ──────────────────────────────────────────────────────────────────────
++
++def main() -> None:
++    args = parse_args()
++
++    # --- FASTA: lengths + telomere detection ---
++    print("[bam_links] Reading FASTA ...", flush=True)
++    lengths, left_tel, right_tel = read_fasta(args.fasta, args.scan_window)
++    print(
++        f"[bam_links]   {len(lengths):,} contigs | "
++        f"{len(left_tel)} left-telomere ends | "
++        f"{len(right_tel)} right-telomere ends",
++        flush=True,
++    )
++
++    # --- Include ranges ---
++    ranges = build_include_ranges(lengths, left_tel, right_tel, args.flank)
++
++    fully_excluded = sum(1 for sl, el, sr, er in ranges.values() if sl == el == sr == er == 0)
++    if fully_excluded:
++        print(
++            f"[bam_links]   {fully_excluded} contigs fully excluded "
++            f"(both ends telomeric or too short)",
++            flush=True,
++        )
++
++    # --- BAM ---
++    flank_reads = collect_flank_reads(args.bam, ranges, lengths, args.threads)
++
++    if not flank_reads:
++        print(
++            "[bam_links] ERROR: no flank reads collected. "
++            "Check that the BAM contains supplementary alignments and that "
++            "contig names match between BAM and FASTA.",
++            file=sys.stderr,
++        )
++        sys.exit(1)
++
++    # --- Jaccard → contig edges ---
++    flank_edges  = compute_jaccard_edges(flank_reads, args.threshold)
++    contig_edges = flanks_to_contig_edges(flank_edges)
++
++    # --- Write output ---
++    out = Path(args.output)
++    out.parent.mkdir(parents=True, exist_ok=True)
++
++    with out.open("w") as fh:
++        fh.write("contig_a\tcontig_b\tjaccard\n")
++        for a, b, j in contig_edges:
++            fh.write(f"{a}\t{b}\t{j:.6f}\n")
++
++    print(f"[bam_links] Done → {out}", flush=True)
++
++
++if __name__ == "__main__":
++    main()
+--- a/bin/scripts/__pycache__/gnn_kmers.cpython-313.pyc
++++ b/bin/scripts/__pycache__/gnn_kmers.cpython-313.pyc
+@@ -1,52 +1,52 @@
+-�-
++�
++
+     �N�j�  �                   �j  � S r SSKrSSKrSSKJr  SSKJr  SSKJr  \" SSS9 V s/ s H  n S	R                  U 5      PM      sn r
+ S
+  r S  r-\+\
+ S :X  a_  \R-                  " 5       r\R!                  S+                  " 5       r\R!                  S
+ SS9  \R!                  SSS9  \R#                  5       r\ " \R&                  \R(                  5        ggs  sn f )zPGenerate the original 256-column Jellyfish-compatible noncanonical 4-mer counts.�    N)�Counter)�product)�Path�ACGT�   )�repeat� c              #   �  #   � S n/ n[        U 5       nU Hx  nUR                  S5      (       a2  Ub  USR                  U5      4v �  USS  R                  5       S   n/ nMK  UR	                  UR-                  5       R+                  5       R
+                   5       5        Mz      S S S 5        Ub  USR                  U5      4v �  g g ! , (       d  f       N(= f7f)N�>r	   �   r   )�open�
+ startswith�join�split�append�strip�upper)�path�name�chunks�f�lines        �N/mnt/data/work_unified/schwammerlRohr-unified-preview/bin/scripts/gnn_kmers.py�	sequencesr   
+    s�   � � �-�D�"��	+�D�"��	
+ �d��q��D����s�#�#��#�4������+@�%@��A�B�x�~�~�'��*��2�F��-�-��
+ �
+ � � 2� 2� 4�5�	 � 
+ �  -��t�R�W�W�V�_�4�4��+��t�R�W�W�V�_�4�4��
+  
+ ��s    �C�A?B3�"C�3
+-C�=Cc           +C�=Cc           
+       ��  ^� [        U5      oR                  R                  SSS9  UR                  SSS9 n[        R
+-                  " U5      o3R+                  " U5      o3R
+                   S/[        Q5        [        U 5       He  u  nm[        U4S j[        [        S[        T5      S	-
+-  5      5       5       5      nUR+  5      5       5       5      nUR
+                   U/[         Vs/ s H  oeU   PM	      snQ5        Mg      S S S 5        g s  snf ! , (       d  f       g = f)
+ NT)�parents�exist_ok�wr	   )�newline�contigc              3   �2   >#   � U  H   nTXS -    v �  M  -   g7f)r   N� )�.0�i�seqs     �r   �	<genexpr>�run.<locals>.<genexpr>   s   �� � �H�/G�!�3�q�1��:�/G�s   �r   �   )-r   �parent�mkdirr+   g7f)r   N� )�.0�i�seqs     �r   �	<genexpr>�run.<locals>.<genexpr>   s   �� � �H�/G�!�3�q�1��:�/G�s   �r   �   )
++r   �parent�mkdirr
+    �csv�writer�writerow�KMERSr   r   �range�max�len)�src�destr   r-   r   �counts�kr%   s          @r   �runr6      s�   �� �	-�d��D�[�[�&�&�t�T�&�B�	+   r   �counts�kr%   s          @r   �runr6      s�   �� �	
++�d��D�[�[�&�&�t�T�&�B�	
+ ���3�r��	"�a�
+-+
+ �*�*�Q�-����X�$5�u�$5�6�!�#��H�D���H�u�S��3�s�8�A�:�5F�/G�H�H�F�-+
+ �J�J��9�%� 8�%�Q�a�y�%� 8�9�--- a/bin/scripts/__pycache__/gnn_links_from_cache.cpython-313.pyc
++++ b/bin/scripts/__pycache__/gnn_links_from_cache.cpython-313.pyc
+@@ -1,13 +1,13 @@
+-�-
++�
++
+     �N�j�  �                   �N   � S r SSKrSSKrSSKrSSKJr  S r\S:X  a  \" 5         gg)zHUse the pre-existing CoverM BAM cache for the original BAM links method.�    N)�Pathc                   ��  � [         R                  " 5       o R                  SSS9  U R                  SSS9  U R                  SSS9  U R                  SSS9  U R                  5       n[	        UR
+                   5      S	--  nUR+  nUR
+                   5       (       a  [        UR                  S
+ 5      5      O/ n[        U5      S :w  a!  U R                  S-U S+U S
+ [        U5       S35        [	        [        5      R                  5       R                  S    S-   S---- a/bin/scripts/__pycache__/gnn_stage_inputs.cpython-313.pyc
++++ b/bin/scripts/__pycache__/gnn_stage_inputs.cpython-313.pyc
+@@ -1,5 +1,5 @@
+-�-
++�
++
+     �N�j�  �                   �L   � S r SSKrSSKrSSKJr  S rS r\S:X  a  \" 5         gg)zHStage ML-compatible source files without changing the upstream GNN code.�    N)�Pathc                 �b  � [        U R                  5      nUR                  5       (       a  [        R                  " U5        UR                   SS9  U R                   U R                  U R                  U R                  S.nU R                  (       a  U R                  US'   U R                  (       a  U R                  X R                  S-   '   UR                  5        HQ  u  p4[        U5      R@@ -16,7 +16,7 @@
+ G�E��w�w�Q�W�W��3�4��u�u����e�H�H�Z�'�(� � �-�+�
+ � �� ��I�@@ -29,15 +29,15 @@
+ � �!�!�#�&� &�    c                  ��   � [         R                  " 5       n S H  oR                  SU-   SS9  M      U R                  S5        U R                  S5        U R                  5       n[	        U5        g )N)r-   r+   r
+    r   r   r   r   z--T)�requiredz--tiaraz--tax)�argparse�ArgumentParser� add_argument�
+ parse_argsr    )�p�xr   s      r    �mainr'      sT   � �� �-��A�-F��~�~�VZ�[\�V\�fj�~�Gk�+��A�
++F��~�~�VZ�[\�V\�fj�~�Gk�
+ F��N�N�9� �a�n�n�W� 5��--- a/run_pipeline.sh
++++ b/run_pipeline.sh
+@@ -16,6 +16,7 @@
+ GENE_PREDICTION="busco"
+ TIARA_MODE="off"
+ TIARA_MODE_SET=0
++TIARA_MODE_SET=0
+ TIARA_TSV=""
+ METAEUK_REF=""
+ METAEUK_SIF="bin/singularity/metaeuk.sif"
+@@ -52,6 +53,7 @@
+   --binning-backend MODE   mycobinr (default), gnn, both
+   --gnn-input-root DIR    Existing ML-compatible input root (per sample/input)
+   --gnn-python PATH       Python executable with ML dependencies
++                            (GNN enables Tiara by default; use --tiara-mode off to override)
+                             (GNN enables Tiara by default; use --tiara-mode off to override)
+   --container-images PATH   JSON manifest for images (default bin/containers/images.json)
+   --no-container-setup      Do not provision images before actual execution
+@@ -114,6 +116,10 @@
+   [[ -f "$TIARA_TSV" ]] || { echo "Error: Tiara TSV not found: $TIARA_TSV" >&2; exit 2; }
+   TIARA_TSV="$(realpath "$TIARA_TSV")"
+ fi
++if [[ "$TIARA_MODE" == file ]]; then
++  [[ -f "$TIARA_TSV" ]] || { echo "Error: Tiara TSV not found: $TIARA_TSV" >&2; exit 2; }
++  TIARA_TSV="$(realpath "$TIARA_TSV")"
++fi
+ if [[ "$GENE_PREDICTION" == standalone ]]; then
+   [[ -f "$METAEUK_REF" ]] || { echo 'Error: --metaeuk-ref must name an existing reference FASTA' >&2; exit 2; }
+   METAEUK_REF="$(realpath "$METAEUK_REF")"
+@@ -126,6 +132,10 @@
+ # Resolve the requested container engine (Snakemake itself has no Docker
+ # --use-docker flag; Docker rule commands use docker_exec.py).
+ [[ "$BINNING_BACKEND" == mycobinr || "$BINNING_BACKEND" == gnn || "$BINNING_BACKEND" == both ]] || { echo "Invalid --binning-backend" >&2; exit 2; }
++# Original GNN uses Tiara as a feature: provide it unless explicitly disabled.
++if [[ "$TIARA_MODE_SET" -eq 0 && "$BINNING_BACKEND" != mycobinr ]]; then
++  TIARA_MODE=run
++fi
+ # Original GNN uses Tiara as a feature: provide it unless explicitly disabled.
+ if [[ "$TIARA_MODE_SET" -eq 0 && "$BINNING_BACKEND" != mycobinr ]]; then
+   TIARA_MODE=run

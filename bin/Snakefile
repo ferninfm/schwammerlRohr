@@ -130,6 +130,7 @@ def completion_marker(sample):
 
 rule all:
     input:
+        (expand("PacBio_output/gnn/{sample}/.complete", sample=SAMPLES) if config.get("binning_backend", "mycobinr") in ("gnn", "both") else []),
         # reports
         expand(f"{OUTPUT_DIR}/reports/{PROJECT_NR}" + "{sample}_report.html", sample=SAMPLES),
         # per-sample completion flags
@@ -502,3 +503,6 @@ rule mark_complete:
     run:
         Path(Path(output.done).parent).mkdir(parents=True, exist_ok=True)
         Path(output.done).touch()
+
+# Bundled, original ML model: optional GNN branch.
+include: "gnn.smk"
