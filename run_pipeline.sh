@@ -10,8 +10,13 @@ PROJECT_NR_GIVEN=0
 DIAMOND_DB="/path/to/DiamondDB.dmnd"
 VERBOSE=0
 DRYRUN=0
+BINNING_BACKEND="mycobinr"
+GNN_INPUT_ROOT="PacBio_output/gnn_inputs"
+GNN_PYTHON="python3"
 GENE_PREDICTION="busco"
 TIARA_MODE="off"
+TIARA_MODE_SET=0
+TIARA_MODE_SET=0
 TIARA_TSV=""
 METAEUK_REF=""
 METAEUK_SIF="bin/singularity/metaeuk.sif"
@@ -45,6 +50,11 @@ Other options:
   --tiara-tsv PATH           Tiara TSV if mode=file (one sample only)
   --tiara-sif PATH           Optional override for Tiara SIF if mode=run
   --container-runtime MODE  auto (default), docker, apptainer, singularity, none
+  --binning-backend MODE   mycobinr (default), gnn, both
+  --gnn-input-root DIR    Existing ML-compatible input root (per sample/input)
+  --gnn-python PATH       Python executable with ML dependencies
+                            (GNN enables Tiara by default; use --tiara-mode off to override)
+                            (GNN enables Tiara by default; use --tiara-mode off to override)
   --container-images PATH   JSON manifest for images (default bin/containers/images.json)
   --no-container-setup      Do not provision images before actual execution
   -n, --dry-run              Snakemake dry-run
@@ -77,10 +87,13 @@ while [[ $# -gt 0 ]]; do
     --metaeuk-ref) METAEUK_REF="${2:?}"; shift 2;;
     --metaeuk-sif) METAEUK_SIF="${2:?}"; shift 2;;
     --prodigal-sif) PRODIGAL_SIF="${2:?}"; shift 2;;
-    --tiara-mode) TIARA_MODE="${2:?}"; shift 2;;
+    --tiara-mode) TIARA_MODE="${2:?}"; TIARA_MODE_SET=1; shift 2;;
     --tiara-tsv) TIARA_TSV="${2:?}"; shift 2;;
     --tiara-sif) TIARA_SIF="${2:?}"; shift 2;;
     --container-runtime|--runtime) CONTAINER_RUNTIME="${2:?}"; shift 2;;
+    --binning-backend) BINNING_BACKEND="${2:?}"; shift 2;;
+    --gnn-input-root) GNN_INPUT_ROOT="${2:?}"; shift 2;;
+    --gnn-python) GNN_PYTHON="${2:?}"; shift 2;;
     --container-images) CONTAINER_IMAGES="${2:?}"; shift 2;;
     --no-container-setup) SETUP_CONTAINERS=0; shift;;
     -n|--dry-run)   DRYRUN=1; shift;;
@@ -99,6 +112,14 @@ DIAMOND_DB="$(realpath "$DIAMOND_DB")"
 [[ "$GENE_PREDICTION" == busco || "$GENE_PREDICTION" == standalone ]] || { echo 'Error: --gene-prediction must be busco or standalone' >&2; exit 2; }
 [[ "$TIARA_MODE" == off || "$TIARA_MODE" == run || "$TIARA_MODE" == file ]] || { echo 'Error: --tiara-mode must be off, run or file' >&2; exit 2; }
 
+if [[ "$TIARA_MODE" == file ]]; then
+  [[ -f "$TIARA_TSV" ]] || { echo "Error: Tiara TSV not found: $TIARA_TSV" >&2; exit 2; }
+  TIARA_TSV="$(realpath "$TIARA_TSV")"
+fi
+if [[ "$TIARA_MODE" == file ]]; then
+  [[ -f "$TIARA_TSV" ]] || { echo "Error: Tiara TSV not found: $TIARA_TSV" >&2; exit 2; }
+  TIARA_TSV="$(realpath "$TIARA_TSV")"
+fi
 if [[ "$GENE_PREDICTION" == standalone ]]; then
   [[ -f "$METAEUK_REF" ]] || { echo 'Error: --metaeuk-ref must name an existing reference FASTA' >&2; exit 2; }
   METAEUK_REF="$(realpath "$METAEUK_REF")"
@@ -110,6 +131,15 @@ fi
 
 # Resolve the requested container engine (Snakemake itself has no Docker
 # --use-docker flag; Docker rule commands use docker_exec.py).
+[[ "$BINNING_BACKEND" == mycobinr || "$BINNING_BACKEND" == gnn || "$BINNING_BACKEND" == both ]] || { echo "Invalid --binning-backend" >&2; exit 2; }
+# Original GNN uses Tiara as a feature: provide it unless explicitly disabled.
+if [[ "$TIARA_MODE_SET" -eq 0 && "$BINNING_BACKEND" != mycobinr ]]; then
+  TIARA_MODE=run
+fi
+# Original GNN uses Tiara as a feature: provide it unless explicitly disabled.
+if [[ "$TIARA_MODE_SET" -eq 0 && "$BINNING_BACKEND" != mycobinr ]]; then
+  TIARA_MODE=run
+fi
 case "$CONTAINER_RUNTIME" in
   auto)
     if command -v apptainer >/dev/null 2>&1; then
@@ -149,7 +179,7 @@ for pair in "${NAMED_SAMPLES[@]}"; do sample_args+=(--sample "$pair"); done
 echo 'Input samples:'
 python3 bin/scripts/prepare_samples.py "${sample_args[@]}"
 
-if [[ "$GENE_PREDICTION" == standalone && "$TIARA_MODE" == file ]]; then
+if [[ "$TIARA_MODE" == file ]]; then
   sample_count="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["samples"]))' "$INPUT_CFG")"
   [[ "$sample_count" -eq 1 ]] || { echo 'Error: --tiara-mode=file currently supports only one sample' >&2; exit 2; }
 fi
@@ -169,8 +199,8 @@ PY
 )
 if [[ "$GENE_PREDICTION" == standalone ]]; then
   BIND_DIRS+=("$(dirname "$METAEUK_REF")")
-  [[ "$TIARA_MODE" == file ]] && BIND_DIRS+=("$(dirname "$TIARA_TSV")")
 fi
+[[ "$TIARA_MODE" == file ]] && BIND_DIRS+=("$(dirname "$TIARA_TSV")")
 # Deduplicate bind roots without changing their order.
 declare -a UNIQUE_DIRS=()
 declare -A SEEN_BIND=()
@@ -188,12 +218,12 @@ declare -a SNK_ARGS=(--cores "$CORES" --snakefile ./bin/Snakefile
 if [[ "$CONTAINER_RUNTIME" == apptainer || "$CONTAINER_RUNTIME" == singularity ]]; then
   SNK_ARGS+=(--use-apptainer --apptainer-args "--bind $BINDS")
 fi
-declare -a CFG=("diamond_db=$DIAMOND_DB" "gene_prediction=$GENE_PREDICTION" "tiara_mode=$TIARA_MODE"
+declare -a CFG=("binning_backend=$BINNING_BACKEND" "gnn_input_root=$GNN_INPUT_ROOT" "gnn_python=$GNN_PYTHON" "diamond_db=$DIAMOND_DB" "gene_prediction=$GENE_PREDICTION" "tiara_mode=$TIARA_MODE"
                 "container_runtime=$CONTAINER_RUNTIME" "container_images=$CONTAINER_IMAGES")
 if [[ "$GENE_PREDICTION" == standalone ]]; then
   CFG+=("metaeuk_ref=$METAEUK_REF" "metaeuk_sif=$METAEUK_SIF" "prodigal_sif=$PRODIGAL_SIF" "tiara_sif=$TIARA_SIF")
-  [[ "$TIARA_MODE" == file ]] && CFG+=("tiara_tsv=$TIARA_TSV")
 fi
+[[ "$TIARA_MODE" == file ]] && CFG+=("tiara_tsv=$TIARA_TSV")
 
 printf 'Running Snakemake: cores=%s, prediction=%s, Tiara=%s, runtime=%s, output prefix=%q\n' \
        "$CORES" "$GENE_PREDICTION" "$TIARA_MODE" "$CONTAINER_RUNTIME" "$PROJECT_NR"
@@ -202,8 +232,8 @@ if [[ "$DRYRUN" -eq 0 && "$SETUP_CONTAINERS" -eq 1 && "$CONTAINER_RUNTIME" != no
   required_tools=(longqc flye coverm busco diamond telfinder report)
   if [[ "$GENE_PREDICTION" == standalone ]]; then
     required_tools+=(metaeuk prodigal)
-    [[ "$TIARA_MODE" == run ]] && required_tools+=(tiara)
   fi
+  [[ "$TIARA_MODE" == run ]] && required_tools+=(tiara)
   bash bin/setup.sh --runtime "$CONTAINER_RUNTIME" --images "$CONTAINER_IMAGES" \
     --tools "${required_tools[@]}"
 fi
